@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+
+'''
+Simple TCP shell.
+Just change line 26 to run something else other than bash.
+
+Created by Carl Voller
+'''
+
+from socketserver import BaseRequestHandler, TCPServer
+from os           import getcwd, environ, read, write
+from sys          import exit
+from pty          import openpty
+from select       import select
+from subprocess   import Popen, PIPE
+
+class handler(BaseRequestHandler):
+    def handle(self):
+        (mi, si) = openpty()    # stdin
+        (mo, so) = openpty()    # stdout
+        (me, se) = openpty()    # stderr
+
+        self.mfds = (mo, me, mi)
+        
+        # open child process with the pty terminal as the handler
+        self.proc = Popen("/bin/sh", stdout=so, stderr=se, stdin=si, cwd=getcwd())
+
+        self.request.send(b"Type quit to exit\n");
+        self.read()
+
+        while True:
+
+            msg = self.request.recv(1024)
+            if msg == b'quit\n':
+                break
+            
+            # Exits program when client disconnects
+            if msg == b'':
+                break
+
+            '''if msg not in [b"ls\n"]:
+                self.request.send(b"Not allowed!\n")
+                exit()'''
+
+            write(mi, msg);
+            self.read()
+
+            # Checks if program has been terminated (aka return code is not None)
+            if self.proc.poll() is not None:
+                break
+
+    def read(self):
+        (mo, me, mi) = self.mfds
+        while True:
+
+            # select file descriptor currently being written to
+            ready, _, _ = select([mo, me], [], [], 1)
+
+            if ready:
+                for fd in ready:
+                    data = read(fd, 512)
+                    if not data:
+                        break
+                    self.request.send(data);
+            else:
+                break
+
+with TCPServer(('', int(environ["PORT"])), handler) as server:
+    server.serve_forever()
